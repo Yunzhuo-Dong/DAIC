@@ -35,6 +35,8 @@ def _pick_layers(x, layer, axis):
 
 
 def _session_vec(z, spec):
+    if spec.get("key"):                      # e.g. key: session_emotions (emotion2vec probabilities)
+        return z[spec["key"]]
     if "session_layers" in z.files:
         layer = spec.get("layer", "mean")
         return _pick_layers(z["session_layers"], layer, axis=0)

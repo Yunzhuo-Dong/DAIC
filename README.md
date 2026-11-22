@@ -9,7 +9,9 @@ Speech is the core modality. This repository contains the complete pipeline:
 3. ridge baselines evaluated with repeated cross-validation
 4. leakage and shortcut analyses
 
-> **Status (Nov 2026):** audio-only track (RP1) complete on train + dev. Text and fusion (RP2) are next.
+> **Status (Nov 2026):** audio-only track (RP1) complete on train + dev. Best audio model so far:
+> **emotion2vec+ large on the whole recording + participant timing, CV CCC 0.358, dev CCC 0.389**, and
+> CV AUROC 0.758 for PHQ-8 ≥ 10. Text and fusion (RP2) are next.
 > The test set has **not** been evaluated yet; it will be run once, at the end.
 
 **No data is included.** E-DAIC is licensed for academic, non-commercial research only. Request access at
@@ -90,6 +92,7 @@ unless the name says `_full` (whole recording) or `_others` / `_ellie` (non-part
 | `w2v2_large` | `facebook/wav2vec2-large-lv60`, frozen, 25 layers × 1024 | same; the main vector is the **mean over layers** |
 | `participant_timing` | diarization turns + transcript | speaking time and share, turn count and length, **response latency**, own pauses, words per minute |
 | `interview_structure` | diarization turns | recording length, Ellie / experimenter speech, number of non-participant turns |
+| `e2v_plus_large_full` | [emotion2vec+ large](https://github.com/ddlBoJack/emotion2vec) via FunASR, whole recording in 20 s chunks | duration-weighted mean embedding; mean emotion probabilities (`key: session_emotions`) |
 
 ## 4. Evaluation protocol
 
@@ -103,7 +106,38 @@ unless the name says `_full` (whole recording) or `_others` / `_ellie` (non-part
 
 ## 5. Results (audio only)
 
-### 5.1 PHQ-8 regression and screening
+### 5.1 Best models: emotion2vec on the whole recording
+
+[emotion2vec+ large](https://github.com/ddlBoJack/emotion2vec) is a speech-emotion model of about 300M
+parameters, fine-tuned on about 42k h of pseudo-labelled data. It was run on the **whole recording**:
+
+- the recording is cut into 20 s chunks;
+- each chunk is mean-pooled by FunASR;
+- the chunks are combined in a duration-weighted mean, giving one 1024-d vector per session.
+
+| Model (ridge head) | CV CCC (5×5, n=219) | Dev CCC (n=56) | CV AUROC (PHQ ≥ 10) | Dev AUROC |
+| --- | --- | --- | --- | --- |
+| **emotion2vec+ large embedding + participant timing** | **0.358 ± 0.015** | **0.389** | – | – |
+| emotion2vec+ large embedding | 0.325 ± 0.008 | 0.388 | **0.758 ± 0.003** | **0.816** |
+| emotion2vec+ large, mean **emotion-class probabilities only** | 0.244 ± 0.004 | 0.327 | – | – |
+| *for comparison:* wav2vec2-large layer mean, whole recording | 0.267 ± 0.009 | 0.174 | 0.613 | 0.606 |
+| *for comparison:* wav2vec2-large layer mean + timing, participant turns | 0.216 ± 0.027 | 0.102 | – | – |
+
+What this table shows:
+
+- **An emotion-tuned representation beats a generic one.** emotion2vec improves on wav2vec2-large under the
+  same protocol (whole recording, one vector, ridge): CCC rises from 0.27 to 0.33, AUROC from 0.61 to 0.76.
+  Its CV standard deviation is also much smaller.
+- **A handful of interpretable numbers already reach CCC 0.24.** These are the session-average probabilities
+  of the emotion classes (angry, happy, sad, neutral, ...), almost as much as the 1024-d wav2vec2 vector.
+- **Timing is complementary again** (+0.03 CCC).
+- **Context.** The dev CCC of 0.39 is above the AVEC 2019 audio-visual fusion baseline (0.336 on dev,
+  table below). Our main number, however, is the 5×5 CV on 219 people, and the test set is still untouched.
+- **Caveat.** These features use the whole recording. The leakage analysis (5.3) suggests that the gain over
+  participant-only audio mostly comes from participant speech that diarization missed, not from Ellie. The
+  same check still has to be repeated for emotion2vec (participant-only and Ellie-only runs).
+
+### 5.2 All feature sets (participant speech, unless stated)
 
 | Features (participant speech) | CV CCC (5×5, n=219) | Dev CCC (n=56) | CV AUROC (PHQ ≥ 10) |
 | --- | --- | --- | --- |
@@ -127,7 +161,7 @@ GRU per feature set, learning rate tuned on dev):
 | DS-VGG (best single audio model) | 0.305 | 0.108 |
 | Fusion of 10 audio-visual models | 0.336 | 0.111 |
 
-### 5.2 Layer-wise probing
+### 5.3 Layer-wise probing
 
 Probing every layer separately with ridge (participant speech only):
 
@@ -140,7 +174,7 @@ Depression-related information peaks in the **middle layers**; the last layers, 
 pre-training objective, carry almost none. The best-layer numbers are selected post hoc and are therefore
 optimistic. The pre-specified layer mean and the layer range 12–18 are the main results.
 
-### 5.3 Participant-only vs. whole recording, and leakage
+### 5.4 Participant-only vs. whole recording, and leakage
 
 | wav2vec2-large layer mean | CV CCC | CV CCC, WoZ only | Gender AUROC* | WoZ-vs-AI AUROC |
 | --- | --- | --- | --- | --- |
@@ -173,13 +207,19 @@ These results support the following interpretation:
    to 0.11 on test.
 2. **Self-supervised representations help, if the right layers are used.** wav2vec2-large middle layers
    reach CV CCC 0.21–0.28, versus 0.06 for the last layer.
-3. **Timing behaviour is complementary** (+0.04 CCC when added to wav2vec2).
-4. **Audio-only performance is modest** (CCC about 0.2, AUROC about 0.6), consistent with the literature.
-   Strong E-DAIC results mostly come from text.
-5. **The test set is AI-only and its participants speak less** (6.4 vs. 8.8 min in train). A drop from CV to
+3. **Emotion-specific pre-training helps most.** emotion2vec+ large reaches CV CCC 0.33 (0.36 with timing)
+   and AUROC 0.76, the best audio-only result. Even its emotion-class probabilities alone reach CCC 0.24.
+4. **Timing behaviour is complementary** (+0.03 to +0.04 CCC on top of either embedding).
+5. **Audio alone is useful but limited.** The best model explains only part of the variance (CCC 0.36). Strong
+   E-DAIC results in the literature mostly come from text, so fusion is the next step.
+6. **The test set is AI-only and its participants speak less** (6.4 vs. 8.8 min in train). A drop from CV to
    test is expected and will be reported.
 
 ## 7. Next steps
+
+- **emotion2vec controls.** Run emotion2vec on participant turns only and on Ellie only (leakage check as
+  in 5.4); try `emotion2vec_base` (self-supervised, not emotion-tuned); find out which emotion probabilities
+  drive the prediction.
 
 - **RP2 – text and fusion.** Re-transcribe the participant turns with Whisper to get participant-only text,
   then compare text embeddings, open-weight LLM scoring (Qwen) and audio + text fusion.
@@ -203,7 +243,7 @@ These results support the following interpretation:
 05_llm.py                   reserved (RP2)
 06_diagnose.py              sanity checks: gender AUROC, CV with gender-z / PCA, single-feature correlations
 07_structure.py             interview_structure and participant_timing feature sets
-08_leak_check.py            leakage analysis (section 5.3)
+08_leak_check.py            leakage analysis (section 5.4)
 configs/                    YAML configs (data.yaml is included by all others), ellie_phrases.txt
 edaic/                      data, features/, models, metrics, assemble, config, utils, llm
 slurm/                      env files (Capella GPU / Barnard CPU), job scripts, ridge_suite.sh
@@ -220,8 +260,8 @@ The paths are set in `slurm/env.sh` and `slurm/barnard_env.sh`:
 - `EDAIC_RUNS`: experiments
 - `HF_HOME`: model cache
 
-Diarization uses a separate environment (`~/diar_env`, Python 3.11, `pyannote.audio>=4.1`), so the main
-environment's torch is not touched.
+Diarization and emotion2vec use separate environments (`~/diar_env` with `pyannote.audio>=4.1`,
+`~/e2v_env` with `funasr`), so the main environment's torch is not touched.
 
 ```bash
 source slurm/env.sh

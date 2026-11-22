@@ -33,7 +33,7 @@ def expand_variants(cfg, ids):
     sweep = [i for i, s in enumerate(specs) if s.get("layer") == "all"]
     if not sweep:
         yield cfg.get("variant", "+".join(s["name"] + (f"_L{s['layer']}" if "layer" in s else "")
-                                          for s in specs)), specs
+                                          + (f"_{s['key']}" if s.get("key") else "") for s in specs)), specs
         return
     i = sweep[0]
     for L in range(n_layers(cfg["paths"]["features"], specs[i]["name"], ids)):

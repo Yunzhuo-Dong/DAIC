@@ -1,0 +1,10 @@
+include: data.yaml
+segments:
+  source: full                           # whole recording (all speakers), cut into 20 s chunks
+extractor:
+  type: emotion2vec
+  name: e2v_plus_large_full
+  model: ${WS}/models/emotion2vec_plus_large   # local copy of emotion2vec/emotion2vec_plus_large (HF)
+  min_seconds: 1.0
+# participant turns only: --set segments.source=diarization extractor.name=e2v_plus_large
+# self-supervised base model: --set extractor.model=${WS}/models/emotion2vec_base extractor.name=e2v_base_full

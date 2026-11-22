@@ -10,6 +10,7 @@ To add a modality, write a class with the same interface and register it below.
 """
 from .base import Extractor
 from .egemaps import EGeMAPSExtractor
+from .emotion2vec import Emotion2VecExtractor
 from .praat import PraatExtractor
 from .wav2vec2 import Wav2Vec2Extractor
 from .reserved import OpenFaceExtractor, TextEmbeddingExtractor
@@ -19,6 +20,7 @@ REGISTRY = {
     "frames": EGeMAPSExtractor,        # any provided frame table (BoAW, Deep Spectrum VGG16 / DenseNet201)
     "praat": PraatExtractor,           # parselmouth voice measures + transcript timing
     "wav2vec2": Wav2Vec2Extractor,     # layer-wise wav2vec 2.0 embeddings (GPU)
+    "emotion2vec": Emotion2VecExtractor,  # emotion2vec via FunASR, one vector per session (GPU)
     "openface": OpenFaceExtractor,     # reserved: visual (RP2)
     "text": TextEmbeddingExtractor,    # reserved: transcript embeddings (RP2)
 }
