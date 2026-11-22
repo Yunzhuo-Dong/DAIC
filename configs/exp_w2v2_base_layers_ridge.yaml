@@ -1,0 +1,8 @@
+include: data.yaml
+name: w2v2_base_layers_ridge             # layer probing: one ridge model per layer (0 = CNN output)
+target: phq_score
+features:
+  - name: w2v2_base
+    layer: all
+model:
+  type: ridge

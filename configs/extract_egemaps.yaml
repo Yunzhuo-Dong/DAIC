@@ -1,0 +1,7 @@
+include: data.yaml
+extractor:
+  type: egemaps
+  name: egemaps
+  file_key: egemaps_path                 # provided openSMILE 2.3.0 eGeMAPS LLDs
+  participant_only: true
+  hop_s: 0.01                            # only used if the file has no time column

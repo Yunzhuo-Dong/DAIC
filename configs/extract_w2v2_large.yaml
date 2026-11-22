@@ -1,0 +1,9 @@
+include: data.yaml
+extractor:
+  type: wav2vec2
+  name: w2v2_large
+  model: facebook/wav2vec2-large-lv60    # 24 transformer layers, 1024-d, self-supervised only (no ASR fine-tuning)
+  local_files_only: true                 # download once on a Capella login node, see instructions
+  fp16: true
+  min_seconds: 0.5
+# whole-recording ablation (all speakers): --set segments.source=full extractor.name=w2v2_large_full

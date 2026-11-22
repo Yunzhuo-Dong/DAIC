@@ -1,0 +1,9 @@
+include: data.yaml
+name: egemaps_svr
+target: phq_score
+features:
+  - name: egemaps
+model:
+  type: svr
+  C: [0.1, 1, 10]
+  epsilon: [0.5, 1, 2]

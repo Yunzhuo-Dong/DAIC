@@ -1,0 +1,9 @@
+include: data.yaml
+extractor:                               # provided Deep Spectrum features (AVEC 2019 "DS-VGG"), 4 s window, 1 s hop
+  type: frames
+  name: ds_vgg16
+  file_key: vgg16_path
+  stats: [mean, std]
+  time_offset_s: 0.0                     # file has a time column (timeStamp); +2.0 if it marks window starts
+  participant_only: true                 # whole-recording ablation: --set extractor.participant_only=false extractor.name=ds_vgg16_full
+  save_segments: false

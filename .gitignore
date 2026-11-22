@@ -1,0 +1,20 @@
+# never commit E-DAIC data or anything derived from it (EULA)
+*.wav
+*.mat
+*.npz
+*.npy
+*.pt
+edaic_raw/
+edaic_features/
+edaic_clean/
+edaic_runs/
+hf_cache/
+logs/
+*.log
+# python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+# local secrets
+.wgetrc
+*token*

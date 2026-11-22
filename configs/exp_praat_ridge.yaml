@@ -1,0 +1,7 @@
+include: data.yaml
+name: praat_ridge
+target: phq_score
+features:
+  - name: praat
+model:
+  type: ridge

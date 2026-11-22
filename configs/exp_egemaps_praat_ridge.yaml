@@ -1,0 +1,8 @@
+include: data.yaml
+name: egemaps_praat_ridge                # early fusion = concatenated session vectors
+target: phq_score
+features:
+  - name: egemaps
+  - name: praat
+model:
+  type: ridge

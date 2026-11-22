@@ -1,0 +1,9 @@
+include: data.yaml
+extractor:
+  type: wav2vec2
+  name: w2v2_base
+  model: facebook/wav2vec2-base          # 12 layers, 768-d, self-supervised only (no ASR fine-tuning)
+  # model: facebook/wav2vec2-large-lv60  # optional: 24 layers, 1024-d (name: w2v2_large)
+  local_files_only: true                 # download once on a login node, see README
+  fp16: true
+  min_seconds: 0.5

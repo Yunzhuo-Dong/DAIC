@@ -1,0 +1,19 @@
+include: data.yaml
+diarization:
+  pipeline: pyannote/speaker-diarization-community-1   # gated: accept terms on Hugging Face first
+  out_dir: ${WS}/edaic_clean
+  exclusive: true          # one speaker at a time (no overlapping turns) if the pipeline provides it
+  min_speakers: 1
+  max_speakers: 4          # participant + Ellie + experimenter (+ spare)
+  min_share: 0.2           # a louder speaker must hold >= 20% of diarized speech ...
+  loud_margin_db: 3.0      # ... and be >= 3 dB louder than the longest speaker to be chosen instead
+  allow_cpu: false
+  selection:               # used by 01c_select_participant.py (re-selection without GPU)
+    ellie_overlap: 0.5     # speaker covering >= 50% of Ellie-script transcript rows ...
+    ellie_quiet_db: 6.0    # ... AND (>= 6 dB quieter than the loudest speaker OR not the longest speaker) = Ellie
+    min_seconds: 20        # clusters with < 20 s of speech cannot be the participant
+    rel_min_seconds: 0.25  # ... nor clusters with < 25% of the longest remaining speaker's speech
+    setup_end_s: 150       # speaker whose last turn ends before 150 s = experimenter (setup talk)
+    merge_db: 6.0          # merge another cluster into the participant if within 6 dB ...
+    merge_min_seconds: 60  # ... and >= 60 s of speech ...
+    merge_max_ellie_overlap: 0.3   # ... and < 30% overlap with Ellie's scripted rows

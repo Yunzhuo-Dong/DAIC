@@ -1,0 +1,6 @@
+include: data.yaml
+extractor:
+  type: praat
+  name: praat
+  f0_min: 75
+  f0_max: 500

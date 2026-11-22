@@ -1,0 +1,13 @@
+include: data.yaml
+name: CHANGE_ME                          # set with --set name=... features.0.name=...
+target: phq_score                        # ridge_clf uses phq_binary automatically
+y_range: [0, 24]
+features:
+  - name: CHANGE_ME
+model:
+  type: ridge                            # ridge | ridge_clf | svr
+  alpha_logspace: [-1, 5, 25]
+eval:
+  threshold: 10
+  cv: true                               # 5x5-fold CV on train+dev
+  cv_reps: 5

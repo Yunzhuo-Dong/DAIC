@@ -1,0 +1,26 @@
+# Shared paths and participant-segment settings. Every other config includes this file.
+paths:
+  raw: ${EDAIC_RAW}                      # downloaded E-DAIC (labels/, data/<id>_P/)
+  features: ${EDAIC_FEAT}                # cached features, one folder per extractor
+  runs: ${EDAIC_RUNS}                    # experiment outputs
+  index: ${EDAIC_FEAT}/sessions.csv      # written by 01_index.py
+
+cleaning:                                # remove Ellie / experimenter speech from transcripts
+  enabled: true
+  phrases_file: ${EDAIC_CODE}/configs/ellie_phrases.txt
+  drop_before_intro: true                # interview start = first Ellie row (intro or a scripted question)
+  intro_markers: ["hi i'm ellie", "i was created to talk to people"]   # these rows are dropped whole
+  start_window_s: 150                    # look for the first Ellie row only in the first 150 s
+  skip_seconds: 40                       # no Ellie row found: drop rows starting before 40 s (setup talk)
+  setup_keywords: ["move around a little bit", "kinect", "virtual human", "ring the bell",
+                   "ring this bell", "green skeleton", "go ahead and start", "move your arms"]
+  min_words: 1                           # after stripping Ellie phrases, rows with fewer words are dropped
+  drop_mixed: false                      # true = also drop rows that mixed Ellie + participant (RP3 ablation)
+
+segments:                                # participant speech segments
+  source: diarization                     # transcript (rule-based cleaning) | diarization (after 01b_diarize.py)
+  diar_dir: ${WS}/edaic_clean            # output of 01b_diarize.py
+  min_overlap: 0.5                       # diarization: keep transcript rows >= 50% inside participant turns
+  merge_gap: 1.0                        # E-DAIC rows are short ASR fragments: merge if gap <= 1 s
+  min_dur: 0.5                           # drop turns shorter than this (s)
+  max_dur: 20.0                          # chunk longer turns (s)

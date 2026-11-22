@@ -1,0 +1,9 @@
+include: data.yaml
+extractor:                               # provided bag-of-audio-words on eGeMAPS (AVEC 2019 "BoAW-e"), 4 s window, 0.1 s hop in the files
+  type: frames
+  name: boaw_egemaps
+  file_key: boaw_egemaps_path
+  stats: [mean, std]
+  time_offset_s: 0.0                     # file has a time column (timeStamp); +2.0 if it marks window starts
+  participant_only: true                 # whole-recording ablation: --set extractor.participant_only=false extractor.name=boaw_egemaps_full
+  save_segments: true

@@ -1,0 +1,21 @@
+include: data.yaml
+name: w2v2_base_attnpool                 # segment sequence -> attention pooling
+target: phq_score
+features:
+  - name: w2v2_base
+    layer: 6                             # set to the best layer from the ridge sweep
+model:
+  type: attnpool
+  hidden: 128
+  dropout: 0.3
+train:
+  seeds: [0, 1, 2, 3, 4]
+  epochs: 150
+  patience: 25
+  lr: 1.0e-3
+  weight_decay: 1.0e-2
+  batch_size: 16
+  loss: mse                              # mse | ccc | mse+ccc
+  segment_dropout: 0.1
+  max_segments: 400
+  device: cpu                            # small model: CPU on Barnard is enough

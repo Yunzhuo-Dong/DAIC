@@ -1,0 +1,11 @@
+include: data.yaml
+name: egemaps_ridge
+target: phq_score
+y_range: [0, 24]
+features:
+  - name: egemaps
+model:
+  type: ridge
+  alpha_logspace: [-1, 5, 25]
+eval:
+  threshold: 10

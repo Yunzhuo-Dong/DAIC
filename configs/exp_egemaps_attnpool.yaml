@@ -1,0 +1,16 @@
+include: data.yaml
+name: egemaps_attnpool
+target: phq_score
+features:
+  - name: egemaps
+model:
+  type: attnpool
+  hidden: 64
+  dropout: 0.3
+train:
+  seeds: [0, 1, 2, 3, 4]
+  epochs: 150
+  patience: 25
+  lr: 1.0e-3
+  loss: mse
+  device: cpu

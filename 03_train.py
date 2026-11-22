@@ -1,0 +1,161 @@
+"""Train one experiment config on train, select on dev, write predictions for dev and test.
+
+    python 03_train.py --config configs/exp_egemaps_ridge.yaml
+    python 03_train.py --config configs/exp_w2v2_large_layers_ridge.yaml                     # layer sweep
+    python 03_train.py --config configs/exp_ds_vgg16_ridge.yaml --set model.type=ridge_clf name=ds_vgg16_clf
+
+Heads: ridge / svr (PHQ-8 regression), ridge_clf (PHQ-8 >= 10, class-balanced), attnpool (sequences).
+Output: $EDAIC_RUNS/<name>/<variant>/
+    seed<k>/preds_{dev,test}.csv, metrics_dev.json   (train on train, evaluate on dev)
+    metrics_cv.json                                   (sklearn heads: 5x5-fold CV on train+dev, 219 people;
+                                                       the main model-selection number - dev alone is 56 people)
+Test metrics are NOT printed here; use 04_evaluate.py --split test at the very end.
+"""
+import argparse
+import copy
+import os
+
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import KFold, StratifiedKFold
+
+from edaic.assemble import n_layers, segment_lists, session_matrix
+from edaic.config import load_config, save_config
+from edaic.data import load_index
+from edaic.metrics import ccc, classif_report, report, rmse
+from edaic.models import CLASSIFIERS, SKLEARN_MODELS, build_sklearn, train_attnpool
+from edaic.utils import log, save_df, save_json, seed_everything
+
+
+def expand_variants(cfg, ids):
+    """Yield (variant_name, feature_specs). `layer: all` on one spec -> one variant per layer."""
+    specs = cfg["features"]
+    sweep = [i for i, s in enumerate(specs) if s.get("layer") == "all"]
+    if not sweep:
+        yield cfg.get("variant", "+".join(s["name"] + (f"_L{s['layer']}" if "layer" in s else "")
+                                          for s in specs)), specs
+        return
+    i = sweep[0]
+    for L in range(n_layers(cfg["paths"]["features"], specs[i]["name"], ids)):
+        s2 = copy.deepcopy(specs)
+        s2[i]["layer"] = L
+        yield f"layer{L:02d}", s2
+
+
+def fit_predict(mcfg, xtr, ytr, xs, y_range, is_clf):
+    model = build_sklearn(mcfg).fit(xtr, ytr)
+    out = []
+    for x in xs:
+        if not len(x):
+            out.append((np.array([]), np.array([])))
+        elif is_clf:
+            out.append((model.decision_function(x), model.predict(x)))
+        else:
+            out.append((np.clip(model.predict(x), *y_range), None))
+    return out
+
+
+def cross_validate(mcfg, X, y, y_range, is_clf, reps=5, folds=5):
+    """Repeated k-fold on train+dev. Returns mean/sd of the main metrics."""
+    res = []
+    for r in range(reps):
+        split = (StratifiedKFold(folds, shuffle=True, random_state=r).split(X, y) if is_clf
+                 else KFold(folds, shuffle=True, random_state=r).split(X))
+        score, label = np.zeros(len(y)), np.zeros(len(y))
+        for tr, te in split:
+            (s, l), = fit_predict(mcfg, X[tr], y[tr], [X[te]], y_range, is_clf)
+            score[te] = s
+            if is_clf:
+                label[te] = l
+        if is_clf:
+            m = classif_report(y, score, label)
+            res.append({k: m[k] for k in ("auroc", "f1_macro", "f1_pos", "bal_acc")})
+        else:
+            res.append({"ccc": ccc(y, score), "rmse": rmse(y, score), "pred_std": float(score.std())})
+    df = pd.DataFrame(res)
+    out = {f"cv_{k}": float(df[k].mean()) for k in df}
+    out.update({f"cv_{k}_sd": float(df[k].std(ddof=0)) for k in df})
+    out.update({"cv_n": int(len(y)), "cv_reps": reps, "cv_folds": folds})
+    return out
+
+
+def run_variant(cfg, idx, variant, specs, out_root):
+    mcfg, tcfg, ecfg = cfg["model"], cfg.get("train", {}), cfg.get("eval", {})
+    is_clf = mcfg["type"] in CLASSIFIERS
+    target = cfg.get("clf_target", "phq_binary") if is_clf else cfg.get("target", "phq_score")
+    y_range = tuple(cfg.get("y_range", [0, 24]))
+    thr = ecfg.get("threshold", 10)
+    split_ids = {s: idx.loc[(idx.split == s) & idx[target].notna(), "id"].tolist() for s in ("train", "dev", "test")}
+    ymap = dict(zip(idx["id"], idx[target]))
+    feat_root = cfg["paths"]["features"]
+    is_seq = mcfg["type"] not in SKLEARN_MODELS
+    seeds = [0] if not is_seq else list(tcfg.get("seeds", [0]))
+
+    if is_seq:
+        if len(specs) != 1:
+            raise ValueError("sequence models take exactly one feature spec (fusion is RP2)")
+        data = {s: segment_lists(split_ids[s], feat_root, specs[0]) for s in split_ids}
+    else:
+        data = {s: session_matrix(split_ids[s], feat_root, specs) for s in split_ids}
+    (xtr, idtr), (xdv, iddv), (xte, idte) = data["train"], data["dev"], data["test"]
+    ytr = np.array([ymap[i] for i in idtr], float)
+    ydv = np.array([ymap[i] for i in iddv], float)
+
+    msg = ""
+    if not is_seq and ecfg.get("cv", True):
+        X = np.concatenate([xtr, xdv])
+        y = np.concatenate([ytr, ydv])
+        cvm = cross_validate(mcfg, X, y, y_range, is_clf, int(ecfg.get("cv_reps", 5)))
+        cvm.update({"variant": variant, "target": target, "head": mcfg["type"]})
+        save_json(os.path.join(out_root, variant, "metrics_cv.json"), cvm)
+        msg = (f"CV AUROC {cvm['cv_auroc']:.3f} ± {cvm['cv_auroc_sd']:.3f}" if is_clf
+               else f"CV CCC {cvm['cv_ccc']:.3f} ± {cvm['cv_ccc_sd']:.3f}")
+
+    dev_main = []
+    for seed in seeds:
+        seed_everything(seed)
+        out = os.path.join(out_root, variant, f"seed{seed}")
+        os.makedirs(out, exist_ok=True)
+        if is_seq:
+            device = "cuda" if tcfg.get("device") == "cuda" else "cpu"
+            predict, hist = train_attnpool(xtr, ytr, xdv, ydv, mcfg, tcfg, seed, device, y_range)
+            save_df(os.path.join(out, "history.csv"), pd.DataFrame(hist))
+            preds = {"dev": (iddv, predict(xdv), None),
+                     "test": (idte, predict(xte) if len(idte) else np.array([]), None)}
+        else:
+            (sdv, ldv), (ste, lte) = fit_predict(mcfg, xtr, ytr, [xdv, xte], y_range, is_clf)
+            preds = {"dev": (iddv, sdv, ldv), "test": (idte, ste, lte)}
+        for split, (ids, p, lab) in preds.items():
+            df = pd.DataFrame({"id": ids, "y": [ymap[i] for i in ids], "pred": p})
+            if lab is not None:
+                df["label"] = lab
+            save_df(os.path.join(out, f"preds_{split}.csv"), df)
+        if is_clf:
+            m = classif_report(ydv, preds["dev"][1], preds["dev"][2])
+            dev_main.append(m["auroc"])
+        else:
+            m = report(ydv, preds["dev"][1], thr if target == "phq_score" else None)
+            dev_main.append(m["ccc"])
+        m.update({"variant": variant, "seed": seed, "n_train": len(idtr), "target": target, "head": mcfg["type"]})
+        save_json(os.path.join(out, "metrics_dev.json"), m)
+    name = "AUROC" if is_clf else "CCC"
+    log(f"{variant:28s} {msg:28s} dev {name} {np.mean(dev_main):.3f} (seeds={len(seeds)})")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", required=True)
+    ap.add_argument("--set", nargs="*", default=[], help="overrides, e.g. model.type=ridge_clf name=x_clf")
+    a = ap.parse_args()
+    cfg = load_config(a.config, a.set)
+    idx = load_index(cfg["paths"]["index"])
+    out_root = os.path.join(cfg["paths"]["runs"], cfg["name"])
+    os.makedirs(out_root, exist_ok=True)
+    save_config(cfg, os.path.join(out_root, "config.yaml"))
+    log(f"experiment {cfg['name']} ({cfg['model']['type']}) -> {out_root}")
+    for variant, specs in expand_variants(cfg, idx["id"].tolist()):
+        run_variant(cfg, idx, variant, specs, out_root)
+
+
+if __name__ == "__main__":
+    main()
