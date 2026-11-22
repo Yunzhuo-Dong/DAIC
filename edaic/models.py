@@ -3,6 +3,7 @@
 sklearn (fast baselines, session vectors):
     ridge      imputer -> scaler -> RidgeCV (alpha by leave-one-out on train)           -> PHQ-8 score
     ridge_clf  imputer -> scaler -> RidgeClassifierCV, class-balanced (alpha by LOO)  -> PHQ-8 >= 10
+    ridge_items imputer -> scaler -> RidgeCV per PHQ-8 item (alpha per item); items clipped to 0-3 and summed
     svr     imputer -> scaler -> SVR (C, epsilon by 5-fold CV on train)
 torch (segment sequences):
     attnpool  per-segment MLP -> gated attention pooling -> score
@@ -18,7 +19,7 @@ from sklearn.svm import SVR
 
 from .metrics import ccc
 
-SKLEARN_MODELS = ("ridge", "svr", "ridge_clf")
+SKLEARN_MODELS = ("ridge", "svr", "ridge_clf", "ridge_items")
 CLASSIFIERS = ("ridge_clf",)
 
 
@@ -28,6 +29,9 @@ def build_sklearn(mcfg):
     if kind == "ridge":
         alphas = np.logspace(*mcfg.get("alpha_logspace", [-1, 5, 25]))
         return make_pipeline(*pre, RidgeCV(alphas=alphas, cv=mcfg.get("alpha_cv")))  # None = efficient LOO
+    if kind == "ridge_items":  # one ridge per PHQ-8 item, each with its own alpha (multi-output)
+        alphas = np.logspace(*mcfg.get("alpha_logspace", [-1, 5, 25]))
+        return make_pipeline(*pre, RidgeCV(alphas=alphas, alpha_per_target=True))
     if kind == "ridge_clf":
         alphas = np.logspace(*mcfg.get("alpha_logspace", [-1, 5, 25]))
         return make_pipeline(*pre, RidgeClassifierCV(alphas=alphas, cv=mcfg.get("alpha_cv"), class_weight="balanced"))

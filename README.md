@@ -9,10 +9,11 @@ Speech is the core modality. This repository contains the complete pipeline:
 3. ridge baselines evaluated with repeated cross-validation
 4. leakage and shortcut analyses
 
-> **Status (Nov 2026):** audio-only track (RP1) complete on train + dev. Best audio model so far:
-> **emotion2vec+ large on the whole recording + participant timing, CV CCC 0.358, dev CCC 0.389**, and
-> CV AUROC 0.758 for PHQ-8 ≥ 10. Text and fusion (RP2) are next.
-> The test set has **not** been evaluated yet; it will be run once, at the end.
+> **Status (Nov 2026):** audio-only track (RP1) finished, including one pre-registered evaluation on the
+> held-out **test set (56 AI-controlled interviews)**. Best test result: **frozen wav2vec2-large on participant
+> speech, CCC 0.26 [0.11, 0.40], AUROC 0.70**, more than twice the AVEC 2019 audio baseline (0.11).
+> emotion2vec was best in cross-validation (CCC 0.36) but did **not** transfer to the AI-only test set
+> (CCC 0.16–0.21, AUROC ≈ 0.52). Text and fusion (RP2) are next.
 
 **No data is included.** E-DAIC is licensed for academic, non-commercial research only. Request access at
 <https://dcapswoz.ict.usc.edu/>. Raw data, features, diarization output and run folders live outside this repository.
@@ -106,7 +107,57 @@ unless the name says `_full` (whole recording) or `_others` / `_ellie` (non-part
 
 ## 5. Results (audio only)
 
-### 5.1 Best models: emotion2vec on the whole recording
+### 5.1 Held-out test set (pre-registered, evaluated once)
+
+Before looking at the test set, we fixed the list of models below:
+
+- **primary:** emotion2vec + timing (ridge), the best CV model;
+- emotion2vec attention pooling;
+- the mean of the two, decided in advance;
+- the wav2vec2-large participant-only vs. whole-recording pair, to test the RP3 hypothesis.
+
+All models were trained on the training set only and evaluated once on the 56 test sessions, which are all
+AI-controlled. 95 % CIs are bootstrapped over participants.
+
+| Model | CV CCC (train+dev) | **Test CCC [95 % CI]** | Test RMSE | Test AUROC (PHQ ≥ 10) |
+| --- | --- | --- | --- | --- |
+| **wav2vec2-large layer mean + timing, participant speech** | 0.216 | **0.262 [0.12, 0.40]** | 6.00 | 0.69 |
+| **wav2vec2-large layer mean, participant speech** | 0.179 | **0.259 [0.11, 0.40]** | 6.04 | 0.70 |
+| wav2vec2-large layer mean, whole recording | 0.261 | 0.248 [0.13, 0.38] | 5.98 | **0.74** |
+| emotion2vec attention pooling, whole recording | 0.361 | 0.205 [−0.08, 0.45] | 6.98 | 0.52 |
+| mean of the two emotion2vec models | – | 0.189 [−0.08, 0.42] | 6.78 | – |
+| emotion2vec + timing, ridge (pre-registered primary) | 0.358 | 0.163 [−0.06, 0.38] | 6.70 | 0.52 |
+| emotion2vec, ridge | 0.325 | 0.164 [−0.06, 0.38] | 6.70 | 0.53 |
+| emotion2vec, ridge classifier (PHQ ≥ 10) | AUROC 0.758 | – | – | 0.554 [0.38, 0.72] |
+
+For reference, published **test** CCCs on E-DAIC:
+
+| Method | Input | Test CCC |
+| --- | --- | --- |
+| AVEC 2019 best audio baseline (DS-VGG) | audio | 0.108 |
+| AVEC 2019 fusion of 10 audio-visual models | audio + video | 0.111 |
+| Yu & Kaya, ICASSP 2025 (as cited by Nerella & Yarra; modality not verified) | audio (emotional segments) | 0.48 |
+| [Nerella & Yarra 2026](https://arxiv.org/abs/2602.15578) (emotion-aware wav2vec2, symptom heads) | audio | 0.52 |
+| Multimodal / text systems (e.g. Ray 2019, Yuan 2022, MLlm-DR 2025) | audio + video + text | 0.67–0.72 |
+
+**What the test set shows**
+
+1. **Cross-validation on train + dev does not predict test performance here.** The CV ranking reversed:
+   emotion2vec (CV 0.36) fell to 0.16–0.21 with chance-level AUROC, and wav2vec2-large (CV 0.18–0.26)
+   held at 0.25–0.26.
+2. **Domain shift WoZ → AI is the likely cause.** Train + dev are 86 % Wizard-of-Oz interviews; the test set
+   is 100 % AI-controlled, with less participant speech (6.4 vs. 8.8 min). The emotion2vec models used the
+   whole recording and fitted characteristics of WoZ sessions that do not carry over.
+3. **The RP3 hypothesis is partly confirmed.** In CV the whole recording looked better than participant
+   speech (0.26 vs. 0.18). On the AI-only test set the advantage disappears (0.25 vs. 0.26), so
+   **participant-only modelling, enabled by diarization, is the more robust choice**.
+4. **Best audio result:** frozen wav2vec2-large on diarized participant speech reaches test CCC 0.26 and
+   AUROC 0.70. This is more than twice the AVEC 2019 audio baseline, but below recent audio-only systems
+   (0.48–0.52) that model segments and symptoms explicitly.
+
+The test set has now been used. Any model changed after this point is reported as a *post-hoc* analysis.
+
+### 5.2 emotion2vec: best in cross-validation
 
 [emotion2vec+ large](https://github.com/ddlBoJack/emotion2vec) is a speech-emotion model of about 300M
 parameters, fine-tuned on about 42k h of pseudo-labelled data. It was run on the **whole recording**:
@@ -132,12 +183,37 @@ What this table shows:
   of the emotion classes (angry, happy, sad, neutral, ...), almost as much as the 1024-d wav2vec2 vector.
 - **Timing is complementary again** (+0.03 CCC).
 - **Context.** The dev CCC of 0.39 is above the AVEC 2019 audio-visual fusion baseline (0.336 on dev,
-  table below). Our main number, however, is the 5×5 CV on 219 people, and the test set is still untouched.
-- **Caveat.** These features use the whole recording. The leakage analysis (5.3) suggests that the gain over
+  table below). **These gains did not hold on the AI-only test set (section 5.1).**
+- **Caveat.** These features use the whole recording. The leakage analysis (5.5) suggests that the gain over
   participant-only audio mostly comes from participant speech that diarization missed, not from Ellie. The
   same check still has to be repeated for emotion2vec (participant-only and Ellie-only runs).
 
-### 5.2 All feature sets (participant speech, unless stated)
+**Further emotion2vec models** (same features, CV on train + dev):
+
+| Model | CV CCC | Dev CCC |
+| --- | --- | --- |
+| attention pooling over 20 s chunks (5 seeds, early stopping on 20 % of *train*) | **0.361 ± 0.015** | 0.475 |
+| 8 per-item ridges, summed | 0.316 ± 0.007 | 0.365 |
+| 8 per-item ridges + timing, summed | 0.345 ± 0.008 | 0.402 |
+
+- Attention pooling improves on mean pooling (+0.036 CCC) and ties with ridge + timing.
+- A first attention-pooling run stopped early on the **dev** set and reported 0.552 on dev. That estimate was
+  inflated by about 0.08 and is not used.
+- Per-item heads do not help a linear model: summing 8 linear predictions is almost the same linear model.
+
+**Which symptoms does the voice predict?** Per-item CV CCC of emotion2vec + timing:
+
+| PHQ-8 item | CV CCC | PHQ-8 item | CV CCC |
+| --- | --- | --- | --- |
+| 6 feeling like a failure | **0.39** | 4 tiredness | 0.16 |
+| 1 little interest / pleasure | **0.34** | 8 moving / speaking slowly | 0.14 |
+| 2 feeling down / depressed | **0.32** | 5 appetite | 0.13 |
+| 7 trouble concentrating | 0.18 | 3 sleep | 0.10 |
+
+Contrary to our expectation, the emotion representation captures the **affective and cognitive symptoms**
+(self-worth, anhedonia, low mood) and not the somatic ones (sleep, appetite, psychomotor).
+
+### 5.3 All feature sets (participant speech, unless stated)
 
 | Features (participant speech) | CV CCC (5×5, n=219) | Dev CCC (n=56) | CV AUROC (PHQ ≥ 10) |
 | --- | --- | --- | --- |
@@ -161,7 +237,7 @@ GRU per feature set, learning rate tuned on dev):
 | DS-VGG (best single audio model) | 0.305 | 0.108 |
 | Fusion of 10 audio-visual models | 0.336 | 0.111 |
 
-### 5.3 Layer-wise probing
+### 5.4 Layer-wise probing
 
 Probing every layer separately with ridge (participant speech only):
 
@@ -174,7 +250,7 @@ Depression-related information peaks in the **middle layers**; the last layers, 
 pre-training objective, carry almost none. The best-layer numbers are selected post hoc and are therefore
 optimistic. The pre-specified layer mean and the layer range 12–18 are the main results.
 
-### 5.4 Participant-only vs. whole recording, and leakage
+### 5.5 Participant-only vs. whole recording, and leakage
 
 | wav2vec2-large layer mean | CV CCC | CV CCC, WoZ only | Gender AUROC* | WoZ-vs-AI AUROC |
 | --- | --- | --- | --- | --- |
@@ -200,34 +276,35 @@ These results support the following interpretation:
   diarization drops part of the participant's speech, not because of a shortcut. Recovering these segments
   (overlap-aware diarization, lower minimum duration) is a concrete next step.
 
-## 6. Main findings so far
+## 6. Main findings (audio only)
 
-1. **Hand-crafted and provided acoustic features carry almost no linear signal** under a strict protocol:
-   CV CCC ≤ 0.09. AVEC-style dev-only numbers are optimistic: their best audio model falls from 0.31 on dev
-   to 0.11 on test.
-2. **Self-supervised representations help, if the right layers are used.** wav2vec2-large middle layers
+1. **Participant speech must be isolated, and diarization does it well.** Transcripts mix Ellie, the
+   experimenter and the participant. pyannote diarization plus simple acoustic rules isolates the participant
+   (gender AUROC ≈ 1.0, Ellie rows inside participant turns: median 4 %).
+2. **Hand-crafted and provided acoustic features carry almost no linear signal** under a strict protocol
+   (CV CCC ≤ 0.09).
+3. **Self-supervised representations help if the right layers are used.** wav2vec2-large middle layers
    reach CV CCC 0.21–0.28, versus 0.06 for the last layer.
-3. **Emotion-specific pre-training helps most.** emotion2vec+ large reaches CV CCC 0.33 (0.36 with timing)
-   and AUROC 0.76, the best audio-only result. Even its emotion-class probabilities alone reach CCC 0.24.
-4. **Timing behaviour is complementary** (+0.03 to +0.04 CCC on top of either embedding).
-5. **Audio alone is useful but limited.** The best model explains only part of the variance (CCC 0.36). Strong
-   E-DAIC results in the literature mostly come from text, so fusion is the next step.
-6. **The test set is AI-only and its participants speak less** (6.4 vs. 8.8 min in train). A drop from CV to
-   test is expected and will be reported.
+4. **The best held-out result comes from participant-only wav2vec2-large:** test CCC 0.26 [0.11, 0.40],
+   AUROC 0.70, more than twice the AVEC 2019 audio baseline.
+5. **Emotion representations win in CV but do not generalise from WoZ to AI interviews.** emotion2vec reached
+   CV CCC 0.36 and AUROC 0.76, but test CCC 0.16–0.21 and AUROC 0.52. It mainly predicts affective and
+   cognitive items (failure, anhedonia, low mood).
+6. **Whole-recording features look better in CV but not on the AI-only test set.** No interviewer-prompt
+   shortcut was found in audio (Ellie alone: CCC −0.02).
+7. **Evaluation lesson.** With 219 mostly-WoZ sessions for development and an AI-only test set, CV is
+   optimistic and can even reverse rankings. Results should be checked under the WoZ → AI shift.
 
 ## 7. Next steps
 
-- **emotion2vec controls.** Run emotion2vec on participant turns only and on Ellie only (leakage check as
-  in 5.4); try `emotion2vec_base` (self-supervised, not emotion-tuned); find out which emotion probabilities
-  drive the prediction.
-
-- **RP2 – text and fusion.** Re-transcribe the participant turns with Whisper to get participant-only text,
-  then compare text embeddings, open-weight LLM scoring (Qwen) and audio + text fusion.
-- **Sequence model.** Attention pooling over participant turns (`attnpool`), 5 seeds.
-- **Better participant recall.** Overlap-aware diarization; re-run the leakage table.
-- **Per-item analysis.** Which PHQ-8 items (sleep, fatigue, psychomotor) audio predicts.
-- **Final test evaluation.** Run once. Hypothesis: the whole-recording model degrades more on the AI-only
-  test set than the participant-only model.
+- **Post-hoc emotion2vec controls** (labelled as post-hoc): emotion2vec on participant turns only, to test
+  whether the whole-recording input caused the WoZ → AI failure; `emotion2vec_base` (not emotion-tuned).
+- **Shift-aware model selection.** Validate on the 30 AI sessions in train + dev (or leave-AI-out) before
+  trusting CV rankings.
+- **RP2 – text and fusion.** Re-transcribe participant turns with Whisper and fuse text embeddings or
+  open-weight LLM scores (Qwen) with the wav2vec2 audio model. Report AI-only results separately, because
+  interviewer-prompt shortcuts are much stronger in text.
+- **Better participant recall.** Overlap-aware diarization.
 
 ## 8. Repository layout
 
@@ -243,7 +320,7 @@ These results support the following interpretation:
 05_llm.py                   reserved (RP2)
 06_diagnose.py              sanity checks: gender AUROC, CV with gender-z / PCA, single-feature correlations
 07_structure.py             interview_structure and participant_timing feature sets
-08_leak_check.py            leakage analysis (section 5.4)
+08_leak_check.py            leakage analysis (section 5.5)
 configs/                    YAML configs (data.yaml is included by all others), ellie_phrases.txt
 edaic/                      data, features/, models, metrics, assemble, config, utils, llm
 slurm/                      env files (Capella GPU / Barnard CPU), job scripts, ridge_suite.sh

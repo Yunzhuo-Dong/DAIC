@@ -19,21 +19,37 @@ def seed_everything(seed):
         pass
 
 
-def _atomic(path, write_fn, retries=3):
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+def _try_write(path, write_fn):
+    tmp = None
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), suffix=".tmp")
+        os.close(fd)
+        write_fn(tmp)
+        os.replace(tmp, path)
+    except OSError:
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        raise
+
+
+def _atomic(path, write_fn, retries=5):
+    """Write via a temp file + rename. HORSE sometimes raises transient I/O errors (Errno 5):
+    retry with back-off, then fall back to $HOME/edaic_fallback/<same path> instead of crashing."""
     for attempt in range(retries):
         try:
-            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), suffix=".tmp")
-            os.close(fd)
-            write_fn(tmp)
-            os.replace(tmp, path)
-            return
-        except OSError:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-            if attempt == retries - 1:
-                raise
+            _try_write(path, write_fn)
+            return path
+        except OSError as e:
+            err = e
             time.sleep(2 * (attempt + 1))
+    fallback = os.path.join(os.path.expanduser("~"), "edaic_fallback", os.path.abspath(path).lstrip("/"))
+    _try_write(fallback, write_fn)
+    log(f"WARNING: could not write {path} ({err}); saved to {fallback} instead")
+    return fallback
 
 
 def save_npz(path, **arrays):
