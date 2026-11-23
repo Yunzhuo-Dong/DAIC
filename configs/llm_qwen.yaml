@@ -1,0 +1,23 @@
+include: data.yaml
+segments:
+  source: diarization                    # participant turns for text_source=participant
+llm:
+  name: qwen38_27b_part                  # -> $EDAIC_RUNS/llm_<name>, $EDAIC_FEAT/llm_<name>
+  backend: hf                            # hf (transformers, in-process) | openai (local vLLM server) | mock
+  model: ${WS}/models/Qwen3.8-27B        # local copy of Qwen/Qwen3.8-27B
+  served_name: Qwen3.8-27B               # openai backend only
+  base_url: http://127.0.0.1:8000/v1     # openai backend only
+  text_source: participant               # participant | full (interviewer included)
+  max_chars: 40000
+  max_new_tokens: 512
+  temperature: 0.0                       # deterministic
+  top_p: 1.0
+  retries: 2
+  chat_template_kwargs:
+    enable_thinking: false               # short JSON answers; ignored by templates without this switch
+embed:
+  name: text_qwen3emb8b_part
+  model: ${WS}/models/Qwen3-Embedding-8B
+  text_source: participant
+  chunk_words: 400
+  instruction: ""                        # documents are embedded without an instruction

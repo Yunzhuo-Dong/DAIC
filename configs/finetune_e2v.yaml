@@ -1,0 +1,24 @@
+include: data.yaml
+name: e2v_lora                           # $EDAIC_RUNS/e2v_lora/{dev,final}/seed<k>/
+segments:
+  source: diarization                    # participant speech only
+finetune:
+  model: ${WS}/models/emotion2vec_plus_large
+  lora_targets: [qkv, proj]              # attention projections of every transformer block
+  block_prefix: "blocks."
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.1
+  head_dropout: 0.1
+train:
+  seeds: [0]
+  epochs: 30
+  batch_size: 16
+  clips_per_session: 8                   # random windows per session and epoch
+  clip_seconds: 8.0
+  max_eval_windows: 60                   # per session at evaluation (evenly spread)
+  lr_lora: 1.0e-4
+  lr_head: 1.0e-3
+  weight_decay: 1.0e-2
+  ccc_weight: 0.0                        # >0 adds a batch CCC loss to MSE
+  eval_every: 1                          # dev stage: evaluate dev every epoch
