@@ -1,0 +1,27 @@
+include: data.yaml
+segments:
+  source: diarization                    # participant turns -> participant transcript (same as the zero-shot run)
+llm:                                     # transcript settings shared with 11_llm_score.py
+  model: ${WS}/models/Qwen3.8-27B
+  text_source: participant
+  max_chars: 40000
+  chat_template_kwargs:
+    enable_thinking: false
+ft:
+  name: qwen38_27b_f1                    # -> $EDAIC_RUNS/llm_ft_<name>/<stage>/
+  # LoRA: "1 epoch, but a large change" -> high learning rate, rank 32, all linear layers of the language model
+  lora_r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  exclude_modules: [visual, vision, mtp, lm_head]   # vision tower / multi-token-prediction head / output layer stay frozen
+  load_in_4bit: false                    # BF16 LoRA (27B = ~56 GB, fits one H100); true = QLoRA (needs bitsandbytes)
+  lr: 2.0e-4
+  epochs: 1
+  batch_size: 1
+  grad_accum: 16                         # effective batch 16 -> ~82 steps for 163 x 8 samples
+  warmup_ratio: 0.06
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  max_len: 8192                          # tokens per sample (prompt + answer); longer prompts are cut in the middle
+  seed: 0
+  log_every: 1

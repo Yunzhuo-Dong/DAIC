@@ -10,6 +10,8 @@ Predicting PHQ-8 depression severity from the speech and transcripts of clinical
 - **Language model.** A local open-weight LLM (Qwen3.8-27B) rates the 8 PHQ-8 items from the participant's
   transcript without any fine-tuning. Its item scores, calibrated with ridge regression, reach **CCC 0.67**.
   That is significantly better than the best audio model (permutation p = 0.001).
+- **Fine-tuning.** LoRA fine-tuning of the LLM on the 163 training interviews does not beat this
+  zero-shot + calibration approach on the dev set (CCC 0.55 vs. 0.62).
 
 **No data is included.** E-DAIC is licensed for academic, non-commercial research only (request access at
 <https://dcapswoz.ict.usc.edu/>). All models run locally; no transcript was sent to an external service.
@@ -82,7 +84,25 @@ The LLM plays the role of a clinician who reads the interview and fills in the q
 
 No LLM parameter is trained. Only the ridge calibration (9 weights) is fitted on the training data.
 
-### 4. Evaluation
+### 4. LLM fine-tuning (LoRA)
+
+We also tested whether fine-tuning the LLM on the training labels beats the zero-shot model.
+
+1. **Samples.** Each training sample is one interview and **one** PHQ-8 item: participant transcript + item text
+   → the participant's true item score as a single digit (0–3). 163 training sessions × 8 items = 1304 samples.
+   The loss is computed on the answer only.
+2. **LoRA.** Rank 32, α 64, dropout 0.05, on all linear layers of the language model (attention, linear-attention
+   and MLP projections; the vision encoder stays frozen). 234 M trainable parameters (0.86 % of 27 B), BF16.
+3. **Training.** 1 epoch, effective batch size 16 (82 steps), AdamW, learning rate 2e-4 with 5 warm-up steps and
+   cosine decay, gradient clipping at 1.0. About 32 min on one H100.
+4. **Prediction.** One forward pass per (session, item). The probabilities of the tokens "0"–"3" give an expected
+   item score (Σ k·p(k)); the 8 expected scores are summed. No text is generated, so every output is valid.
+5. **Protocol.** Train on the training set and evaluate on dev. Only if dev beats the zero-shot + ridge model
+   (dev CCC 0.624) would the model be retrained on train + dev and evaluated on test.
+6. **Control.** The same per-item probability scoring with the original model (no training) separates the effect
+   of fine-tuning from the effect of the scoring format.
+
+### 5. Evaluation
 
 We report CCC, the AVEC metric:
 
@@ -117,6 +137,18 @@ We report CCC, the AVEC metric:
 
 LLM items + ridge vs. emotion2vec (participant) on test: ΔCCC = +0.386, paired permutation p = 0.0012.
 
+### LLM fine-tuning (dev set, model trained on train only)
+
+| Model | Dev CCC | Dev MAE | Mean prediction (true 6.6) |
+| --- | --- | --- | --- |
+| Per-item probability scoring, no training (control) | 0.402 | 3.93 | 3.6 |
+| Per-item LoRA fine-tuning, 1 epoch | 0.553 | 3.44 | 5.9 |
+| **Zero-shot items + ridge (main model)** | **0.624** | – | – |
+
+Fine-tuning did not reach the zero-shot + ridge model on dev, so it was not retrained or evaluated on test.
+Per-item dev CCC after fine-tuning: interest 0.40, mood 0.50, sleep 0.48, energy 0.26, appetite 0.45,
+self-worth 0.57, concentration 0.35, psychomotor 0.21.
+
 ### Comparison with the literature (E-DAIC test set)
 
 | Model | Input | Test CCC |
@@ -135,8 +167,12 @@ The AVEC 2019 baseline reports dev CCC 0.305 for its best audio model and 0.336 
 1. **What the participant says carries far more signal than how it sounds.** Without any fine-tuning, the LLM
    rating reaches test CCC 0.67, against 0.28 for the best audio model. It also beats the zero-shot result of
    MLlm-DR (0.54) and comes close to their fine-tuned model (0.69).
-2. **A linear calibration of the LLM is enough.** The raw item sums are correlated with PHQ-8 but too low.
-   Ridge on the 9 item features removes the bias (test RMSE 5.05 → 4.59) and is very stable (CV SD 0.003).
+2. **A linear calibration of the LLM is enough; fine-tuning does not help.** The raw item sums are correlated
+   with PHQ-8 but too low. Ridge on the 9 item features removes the bias (test RMSE 5.05 → 4.59) and is very
+   stable (CV SD 0.003). LoRA fine-tuning on 163 interviews mainly corrects the same bias (dev mean prediction
+   3.6 → 5.9) but stays below the 9-parameter calibration on dev (0.55 vs. 0.62). The training loss stayed at
+   0.3–0.5, so this is not a sign of memorisation: with this little data the fine-tuned model does not learn
+   more than the zero-shot model already knows. The difference is within the uncertainty of a 56-person dev set.
 3. **Audio adds nothing on top of the LLM.** Early fusion with emotion2vec gives the same test CCC (0.670 vs. 0.666)
    and a lower dev CCC; equal-weight late fusion drops to 0.56.
 4. **The LLM does not depend on the interviewer.** The full transcript, including Ellie's follow-up questions,
@@ -164,7 +200,9 @@ The AVEC 2019 baseline reports dev CCC 0.305 for its best audio model and 0.336 
 04_evaluate.py               result tables, bootstrap CIs, late fusion, permutation tests
 11_llm_score.py              zero-shot PHQ-8 item rating with a local LLM
 12_text_embed.py             transcript embeddings (Qwen3-Embedding; not used in the results)
-configs/                     YAML configs (data.yaml is included by all others; llm_qwen.yaml for the LLM)
+13_llm_inspect.py            LLM ratings vs. true item scores, with the model's evidence sentence
+14_finetune_llm.py           per-item LoRA fine-tuning of the LLM (stages: base / dev / final)
+configs/                     YAML configs (data.yaml is included by all others; llm_qwen.yaml, ft_qwen.yaml for the LLM)
 edaic/                       library code (data, features, models, metrics)
 slurm/                       job scripts for the TU Dresden HPC (Capella GPU / Barnard CPU)
 ```
@@ -180,6 +218,10 @@ python 03_train.py --config configs/exp_feat_ridge.yaml --set features.0.name=e2
 # LLM: zero-shot item ratings, then ridge calibration
 python 11_llm_score.py --config configs/llm_qwen.yaml
 python 03_train.py --config configs/exp_feat_ridge.yaml --set features.0.name=llm_qwen38_27b_part name=llm_part_ridge
+
+# LLM fine-tuning: control, then train -> dev
+python 14_finetune_llm.py --config configs/ft_qwen.yaml --stage base
+python 14_finetune_llm.py --config configs/ft_qwen.yaml --stage dev
 
 # test evaluation
 python 04_evaluate.py --split test --runs $EDAIC_RUNS/e2v_part_ridge $EDAIC_RUNS/llm_part_ridge
