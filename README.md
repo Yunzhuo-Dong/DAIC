@@ -1,6 +1,6 @@
 # Depression detection from clinical interviews on E-DAIC
 
-Predicting PHQ-8 depression severity from the speech and transcripts of clinical interviews in the
+Predicting PHQ-8 depression severity from the speech, transcripts and facial behaviour of clinical interviews in the
 [Extended Distress Analysis Interview Corpus (E-DAIC)](https://dcapswoz.ict.usc.edu/).
 
 **Key results** (E-DAIC test set; test data never used for training or tuning):
@@ -12,6 +12,9 @@ Predicting PHQ-8 depression severity from the speech and transcripts of clinical
   That is significantly better than the best audio model (permutation p = 0.001).
 - **Fine-tuning.** LoRA fine-tuning of the LLM on the 163 training interviews does not beat this
   zero-shot + calibration approach on the dev set (CCC 0.55 vs. 0.62).
+- **Multimodal.** On top of the LLM, a leakage-free residual model on the participant's **voice** adds a small but
+  consistent gain (CV +0.020, test **CCC 0.69**). It comes mainly from emotion2vec features, the change of the
+  voice over the interview and slower answers. **Facial behaviour** (OpenFace) adds nothing.
 
 **No data is included.** E-DAIC is licensed for academic, non-commercial research only (request access at
 <https://dcapswoz.ict.usc.edu/>). All models run locally; no transcript was sent to an external service.
@@ -23,8 +26,8 @@ Predicting PHQ-8 depression severity from the speech and transcripts of clinical
 - **Sessions.** 275 interviews with the virtual interviewer Ellie: 163 train / 56 dev / 56 test (AVEC 2019 split).
   The test set contains only AI-controlled interviews. Train and dev are mostly Wizard-of-Oz.
 - **Label.** PHQ-8 total score (0–24), a self-report depression questionnaire.
-- **Input used here.** The audio of the whole session and the provided ASR transcript. The transcript has no
-  speaker labels.
+- **Input used here.** The audio of the whole session, the provided ASR transcript (no speaker labels) and the
+  provided OpenFace 2.1 features (facial action units, head pose, gaze; no raw video).
 
 ## Method
 
@@ -102,7 +105,53 @@ We also tested whether fine-tuning the LLM on the training labels beats the zero
 6. **Control.** The same per-item probability scoring with the original model (no training) separates the effect
    of fine-tuning from the effect of the scoring format.
 
-### 5. Evaluation
+### 5. Multimodal residual fusion
+
+The text model stays the backbone; voice and face only try to correct what it misses:
+
+```
+final prediction = text prediction + λ · predicted residual,     residual = PHQ-8 − text prediction
+```
+
+1. **Text.** Ridge on the 9 zero-shot LLM features (section 3). Its training residuals are computed from
+   **out-of-fold** predictions (inner 5-fold, repeated 3×); in-sample residuals would be too small.
+2. **Residual model.** Ridge on standardised nonverbal features (median imputation; emotion2vec reduced to 32 PCA
+   components). The ridge strength α and λ ∈ {0, 0.25, 0.5, 0.75, 1} are chosen by inner CV on the training data
+   only. λ = 0 means text only, so the model can decide that a modality does not help.
+3. **Audio features** (participant speech):
+    - emotion2vec mean embedding;
+    - its dynamics: spread of the segment embeddings, change between consecutive segments, and drift between
+      the first and second half of the interview;
+    - timing: speaking time, turn length, response latency after the interviewer, pauses, words per minute.
+4. **Visual features** (OpenFace 2.1), split by speaker state using the diarization:
+    - **speaking**: the participant's turns;
+    - **silent**: the gaps between them, i.e. listening to the next question or pausing.
+
+   For each state there are 35 statistics:
+    - level and occurrence of 8 action units;
+    - expressivity;
+    - speed of facial, head and gaze movement;
+    - head-pose and gaze variability;
+    - smile, frown and lip-corner-depressor events per minute.
+
+   Together with the speaking − silent contrasts this gives 80 features. A control uses the same statistics over
+   all frames, without speaker states.
+5. **Video quality control**, decided from QC data only, before any PHQ-8 result:
+    - audio–video alignment is checked by lip–speech synchrony (participant speech vs. mouth opening);
+    - 3 sessions with a clear offset were corrected;
+    - 23 of 275 sessions (8 %) without lip–speech synchrony or with < 50 % tracked frames get no visual
+      features and fall back to the text prediction.
+6. **Experiments.**
+    - E0: text only;
+    - E1: + audio;
+    - E2: + visual (speaker states);
+    - E3: + audio + visual;
+    - E4a / E4b: E2 / E3 with visual features pooled over all frames;
+    - a **permutation control**: E3 with the nonverbal features shuffled across sessions.
+
+   The model for the test set was chosen by CV, and the test set was evaluated once.
+
+### 6. Evaluation
 
 We report CCC, the AVEC metric:
 
@@ -149,6 +198,26 @@ Fine-tuning did not reach the zero-shot + ridge model on dev, so it was not retr
 Per-item dev CCC after fine-tuning: interest 0.40, mood 0.50, sleep 0.48, energy 0.26, appetite 0.45,
 self-worth 0.57, concentration 0.35, psychomotor 0.21.
 
+### Multimodal residual fusion
+
+| Experiment | CV CCC (train+dev) | Δ CV vs. text [SD over 5 repeats] | Dev CCC | **Test CCC [95 % CI]** | Test RMSE |
+| --- | --- | --- | --- | --- | --- |
+| E0: text (Qwen items + ridge) | 0.633 | – | 0.624 | 0.666 [0.53, 0.77] | 4.59 |
+| **E1: + audio (chosen by CV)** | **0.652** | **+0.020 [0.008]** | 0.620 | **0.688 [0.55, 0.80]** | **4.51** |
+| E2: + visual, speaker states | 0.628 | −0.004 [0.002] | 0.627 | 0.673 [0.54, 0.77] | 4.57 |
+| E3: + audio + visual | 0.646 | +0.013 [0.008] | 0.610 | 0.702 [0.58, 0.80] | 4.44 |
+| E4a: + visual, all frames | 0.630 | −0.002 [0.003] | 0.621 | 0.670 [0.55, 0.76] | 4.57 |
+| E4b: + audio + visual, all frames | 0.642 | +0.010 [0.007] | 0.608 | 0.688 [0.56, 0.79] | 4.49 |
+| Permutation control (E3 shuffled) | 0.628 | −0.005 [0.003] | 0.624 | 0.666 [0.53, 0.77] | 4.59 |
+
+- E1 vs. E0 on test: ΔCCC = +0.022, paired permutation p = 0.50 (n = 56). The test difference has the same size
+  as in CV but is not significant with 56 people.
+- E3 is highest on test but was not chosen, because its CV score is lower than E1's.
+- Largest residual-model weights in E1:
+    - emotion2vec PCA components;
+    - the drift of the voice between the first and second half of the interview (+);
+    - the median and mean response latency (+), i.e. slower answers mean a higher PHQ-8 than the text predicts.
+
 ### Comparison with the literature (E-DAIC test set)
 
 | Model | Input | Test CCC |
@@ -157,8 +226,11 @@ self-worth 0.57, concentration 0.35, psychomotor 0.21.
 | AVEC 2019 baseline, fusion of 10 audio + video models | audio + video | 0.111 |
 | MLlm-DR, LLaMA-3-8B zero-shot ([2025](https://arxiv.org/abs/2507.05591)) | text | 0.54 |
 | MLlm-DR, LLaMA-3-8B fine-tuned with LoRA | text | 0.69 |
+| QuestMF, question-wise fusion ([Mandal et al., CLPsych 2025](https://aclanthology.org/2025.clpsych-1.4/)), mean of 3 seeds | text / text + audio + video | 0.615 / 0.662 |
+| MLlm-DR, multimodal | text + audio + video | 0.72 |
 | **Ours: emotion2vec+ large, participant** | audio | **0.280** |
 | **Ours: Qwen3.8-27B zero-shot + ridge** | text | **0.666** |
+| **Ours: + audio residual (E1)** | text + audio | **0.688** |
 
 The AVEC 2019 baseline reports dev CCC 0.305 for its best audio model and 0.336 for its fusion.
 
@@ -173,8 +245,16 @@ The AVEC 2019 baseline reports dev CCC 0.305 for its best audio model and 0.336 
    3.6 → 5.9) but stays below the 9-parameter calibration on dev (0.55 vs. 0.62). The training loss stayed at
    0.3–0.5, so this is not a sign of memorisation: with this little data the fine-tuned model does not learn
    more than the zero-shot model already knows. The difference is within the uncertainty of a 56-person dev set.
-3. **Audio adds nothing on top of the LLM.** Early fusion with emotion2vec gives the same test CCC (0.670 vs. 0.666)
-   and a lower dev CCC; equal-weight late fusion drops to 0.56.
+3. **The voice adds a little on top of the LLM; the face does not.**
+    - Simple fusion does not work: concatenating emotion2vec with the LLM features gives the same test CCC
+      (0.670 vs. 0.666), and equal-weight late fusion drops to 0.56.
+    - Residual fusion, where the voice only predicts what the text model misses, gives a small but consistent gain
+      (CV +0.020, positive in every repeat; test +0.022). The permutation control shows no gain.
+    - The voice adds *how* and *how fast* something is said: a voice that changes over the interview, and slower
+      answers (cf. psychomotor slowing, PHQ-8 item 8).
+    - Facial action units, head pose and gaze add nothing (CV −0.004). Separating speaking from silent periods does
+      not change this.
+    - This matches other E-DAIC studies, where video alone is weak or negative and multimodal gains are small.
 4. **The LLM does not depend on the interviewer.** The full transcript, including Ellie's follow-up questions,
    is only 0.01 better on test than the participant's words alone, well within the confidence intervals.
 5. **Isolating the participant matters for audio.** On the whole recording, emotion2vec falls from CV 0.33 to
@@ -185,7 +265,8 @@ The AVEC 2019 baseline reports dev CCC 0.305 for its best audio model and 0.336 
    the AVEC 2019 audio baseline and predict values close to the mean. Among pre-trained models, emotion2vec
    beats wav2vec2 in CV (0.35 vs. 0.18) and on test (0.28 vs. 0.26).
 7. **Limitations.**
-    - The test set has only 56 people; confidence intervals are about ±0.12.
+    - The test set has only 56 people; confidence intervals are about ±0.12, so gains of +0.02 cannot be
+      significant there. The CV results on 219 people are the main evidence.
     - The LLM rates the appetite item almost always 0, because the interview rarely touches on it.
     - Participants who answer in a few words are hard for every model.
 
@@ -202,7 +283,11 @@ The AVEC 2019 baseline reports dev CCC 0.305 for its best audio model and 0.336 
 12_text_embed.py             transcript embeddings (Qwen3-Embedding; not used in the results)
 13_llm_inspect.py            LLM ratings vs. true item scores, with the model's evidence sentence
 14_finetune_llm.py           per-item LoRA fine-tuning of the LLM (stages: base / dev / final)
-configs/                     YAML configs (data.yaml is included by all others; llm_qwen.yaml, ft_qwen.yaml for the LLM)
+15_visual_features.py        OpenFace features by speaker state (speaking / silent) + video quality control
+16_audio_dynamics.py         dynamics of the participant's emotion2vec embeddings over the interview
+17_residual_fusion.py        text backbone + nonverbal residual, nested CV, experiments E0-E4 + permutation control
+configs/                     YAML configs (data.yaml is included by all others; llm_qwen.yaml, ft_qwen.yaml,
+                             multimodal.yaml)
 edaic/                       library code (data, features, models, metrics)
 slurm/                       job scripts for the TU Dresden HPC (Capella GPU / Barnard CPU)
 ```
@@ -223,8 +308,14 @@ python 03_train.py --config configs/exp_feat_ridge.yaml --set features.0.name=ll
 python 14_finetune_llm.py --config configs/ft_qwen.yaml --stage base
 python 14_finetune_llm.py --config configs/ft_qwen.yaml --stage dev
 
+# multimodal residual fusion (CV + dev; add --with-test once at the end)
+python 15_visual_features.py --config configs/multimodal.yaml --qc
+python 15_visual_features.py --config configs/multimodal.yaml
+python 16_audio_dynamics.py --config configs/multimodal.yaml
+python 17_residual_fusion.py --config configs/multimodal.yaml
+
 # test evaluation
-python 04_evaluate.py --split test --runs $EDAIC_RUNS/e2v_part_ridge $EDAIC_RUNS/llm_part_ridge
+python 04_evaluate.py --split test --runs $EDAIC_RUNS/e2v_part_ridge $EDAIC_RUNS/llm_part_ridge $EDAIC_RUNS/mm_residual
 ```
 
 ## References
@@ -235,3 +326,5 @@ python 04_evaluate.py --split test --runs $EDAIC_RUNS/e2v_part_ridge $EDAIC_RUNS
 - A. Baevski et al., "wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations," NeurIPS 2020.
 - H. Bredin et al., pyannote.audio. <https://github.com/pyannote/pyannote-audio>
 - Qwen Team, Qwen3.8 model family. <https://huggingface.co/Qwen>
+- A. Mandal, D. Atzil-Slonim, T. Solorio, I. Gurevych, "Enhancing Depression Detection via Question-wise Modality Fusion," CLPsych 2025. <https://aclanthology.org/2025.clpsych-1.4/>
+- T. Baltrušaitis et al., "OpenFace 2.0: Facial Behavior Analysis Toolkit," FG 2018.

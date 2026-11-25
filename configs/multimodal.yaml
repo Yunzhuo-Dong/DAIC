@@ -1,0 +1,54 @@
+include: diarize.yaml                     # data paths + diarization.out_dir (turns.csv / speakers.csv per session)
+segments:
+  source: diarization
+
+# ---------------------------------------------------------------- 15_visual_features.py
+visual:
+  min_confidence: 0.9                    # OpenFace frames kept: success == 1 and confidence >= this
+  edge_margin_s: 0.5                     # seconds removed at both ends of every turn (turn-taking transitions)
+  min_state_s: 30                        # fewer valid seconds in a state -> that state's features are NaN
+  max_gap_s: 20                          # SILENT = gaps between participant turns up to this length (longer = break)
+  exclude:                               # pre-defined video QC rule -> NaN features (text-only) for failing sessions
+    min_valid_share: 0.5                 # tracked face in at least half of the frames
+    max_length_diff_s: null              # not used: different lengths = the recordings end at different times;
+                                         # alignment is tested directly by lip-speech synchrony below
+    min_sync_corr: 0.1                   # participant speech must move the mouth (AU25+AU26)
+    max_sync_lag_s: 1.0                  # offset if the best lag is > 1 s away ...
+    min_lag_gain: 0.1                    # ... AND clearly better than lag 0 (broad peaks are not offsets)
+    correct_offset: true                 # such an offset is corrected (video time axis shifted), not excluded
+  event_min_s: 0.3                       # AU occurrence runs shorter than this are not counted as events
+  aus: [AU01, AU02, AU04, AU06, AU12, AU14, AU15, AU17]   # brow raise/lower, smile, dimpler, lip-corner depressor, chin raiser
+  event_aus: [AU04, AU12, AU15]          # events per minute + mean duration
+  sync_max_lag_s: 3.0                    # lip-speech cross-correlation search range (QC)
+  workers: 8
+
+# ---------------------------------------------------------------- 17_residual_fusion.py
+fusion:
+  name: mm_residual                      # -> $EDAIC_RUNS/mm_residual/<experiment>/
+  text: llm_qwen38_27b_part              # 9 features: 8 zero-shot items + total
+  blocks:                                # feature sets (npz in $EDAIC_FEAT/<name>/); pca = components fitted in each fold
+    audio:
+      - {name: e2v_plus_large, pca: 32}  # participant emotion2vec mean embedding
+      - {name: e2v_dynamics}             # 16_audio_dynamics.py
+      - {name: participant_timing}       # 07_structure.py: speaking time, turns, latency, pauses, words/min
+    visual_state:
+      - {name: visual_state}             # speak / listen / speak-listen contrast
+    visual_global:
+      - {name: visual_global}            # same statistics over all valid frames (control E4)
+  experiments:
+    E0_text: []
+    E1_text_audio: [audio]
+    E2_text_visual: [visual_state]
+    E3_text_audio_visual: [audio, visual_state]
+    E4a_text_visual_global: [visual_global]
+    E4b_text_audio_visual_global: [audio, visual_global]
+  permutation_control: E3_text_audio_visual   # same experiment with nonverbal rows shuffled across sessions
+  lambdas: [0.0, 0.25, 0.5, 0.75, 1.0]   # final = text + lambda * residual; 0 = text only
+  alpha_logspace: [0, 5, 21]             # residual ridge: strong regularisation
+  text_alpha_logspace: [-1, 5, 25]
+  inner_folds: 5                         # OOF text predictions and the choice of (alpha, lambda), training data only
+  inner_reps: 3
+  cv_reps: 5                             # outer 5x5-fold CV on train+dev
+  cv_folds: 5
+  max_missing: 0.5                       # sessions with more NaN in the nonverbal block get residual 0 (text only)
+  y_range: [0, 24]
